@@ -23,13 +23,17 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential autoconf automake autoconf-archive libtool gettext pkg-config python3 libjpeg-dev libpng-dev libtiff-dev libusb-1.0-0-dev libavahi-client-dev libcurl4-gnutls-dev libxml2-dev libieee1284-3-dev libgphoto2-dev libsnmp-dev libsystemd-dev libpoppler-glib-dev libglib2.0-dev
+          sudo apt-get install -y build-essential autoconf automake autoconf-archive libtool gettext autopoint pkg-config python3 libjpeg-dev libpng-dev libtiff-dev libusb-1.0-0-dev libavahi-client-dev libcurl4-gnutls-dev libxml2-dev libieee1284-3-dev libgphoto2-dev libsnmp-dev libsystemd-dev libpoppler-glib-dev libglib2.0-dev
       - name: Check whitespace
         run: git show --format= --check HEAD && git diff --check
       - name: Python protocol tests
         run: python3 -m unittest discover -s testsuite/backend/scansnap -p 'test_scansnap_*.py' -v
       - name: Bootstrap
-        run: ./autogen.sh
+        shell: bash
+        run: |
+          # autogen.sh does not enable errexit itself. Keep failures here,
+          # rather than continuing to configure with missing helper files.
+          bash -e ./autogen.sh 2>&1 | tee bootstrap.log
       - name: Configure
         env:
           VARIANT: ${{ matrix.variant }}
@@ -60,6 +64,7 @@ jobs:
           # Early failures can occur before configure or tests create logs.
           if-no-files-found: ignore
           path: |
+            bootstrap.log
             build/config.log
             build/testsuite/**/*.log
             build/testsuite/**/*.trs
