@@ -4,7 +4,7 @@
 ##  This file is part of the "Sane" build infra-structure.  See
 ##  included LICENSE file for license information.
 
-EXTRA_DIST = data/boolean.conf data/empty.conf data/fixed.conf data/int.conf \
+EXTRA_DIST = data/malformed-value.conf data/boolean.conf data/empty.conf data/fixed.conf data/int.conf \
 	     data/snapscan.conf data/string.conf data/string-list.conf \
 	     data/umax_pp.conf data/word-array.conf data/wrong-boolean.conf \
 	     data/wrong-fixed.conf data/wrong-range.conf \

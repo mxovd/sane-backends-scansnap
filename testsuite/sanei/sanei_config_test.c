@@ -212,6 +212,9 @@ string_option (void)
   assert (status == SANE_STATUS_GOOD);
   assert (strcmp (modelname, "my model") == 0);
   assert (strcmp (vendor, "my vendor") == 0);
+
+  for (i = 0; i < config.count; i++)
+    free (options[i]);
 }
 
 
@@ -255,6 +258,9 @@ int_option (void)
   /* check results */
   assert (status == SANE_STATUS_GOOD);
   assert (modelnumber == 1234);
+
+  for (i = 0; i < config.count; i++)
+    free (options[i]);
 }
 
 
@@ -298,6 +304,9 @@ wrong_range_int_option (void)
   /* check results */
   assert (status == SANE_STATUS_INVAL);
   assert (modelnumber == -1);
+
+  for (i = 0; i < config.count; i++)
+    free (options[i]);
 }
 
 
@@ -344,6 +353,9 @@ word_array_option (void)
     {
       assert (numbers[i] == 1000 + 100 * i);
     }
+
+  for (i = 0; i < config.count; i++)
+    free (options[i]);
 }
 
 
@@ -387,6 +399,9 @@ string_list_option (void)
   /* check results */
   assert (status == SANE_STATUS_GOOD);
   assert (strcmp (choice, "string3") == 0);
+
+  for (i = 0; i < config.count; i++)
+    free (options[i]);
 }
 
 
@@ -433,6 +448,9 @@ wrong_string_list_option (void)
   /* check results */
   assert (status == SANE_STATUS_INVAL);
   assert (strcmp (choice, "") == 0);
+
+  for (i = 0; i < config.count; i++)
+    free (options[i]);
 }
 
 
@@ -636,6 +654,9 @@ wrong_bool_option (void)
   /* check results */
   assert (status == SANE_STATUS_INVAL);
   assert (booltrue == SANE_TRUE);
+
+  for (i = 0; i < config.count; i++)
+    free (options[i]);
 }
 
 
@@ -706,6 +727,9 @@ bool_option (void)
     {
       assert (boolarray[i] == (SANE_Bool) i % 2);
     }
+
+  for (i = 0; i < config.count; i++)
+    free (options[i]);
 }
 
 
@@ -777,6 +801,9 @@ fixed_option (void)
     {
       assert (fixedarray[i] == SANE_FIX (2.0 + 0.1 * ((float) i)));
     }
+
+  for (i = 0; i < config.count; i++)
+    free (options[i]);
 }
 
 
@@ -818,6 +845,9 @@ wrong_fixed_option (void)
 
   /* check results */
   assert (status == SANE_STATUS_INVAL);
+
+  for (i = 0; i < config.count; i++)
+    free (options[i]);
 }
 
 
@@ -859,6 +889,38 @@ snapscan (void)
   assert (strcmp (firmware, "/usr/share/sane/snapscan/your-firmwarefile.bin")
 	  == 0);
   /* TODO must test attach() done */
+
+  for (i = 0; i < config.count; i++)
+    free (options[i]);
+}
+
+
+/* Malformed values must release temporary parser allocations for every type. */
+static void
+malformed_option_values (void)
+{
+  SANE_Value_Type types[] = {
+    SANE_TYPE_INT, SANE_TYPE_BOOL, SANE_TYPE_FIXED, SANE_TYPE_STRING
+  };
+  SANE_Option_Descriptor option = {0};
+  SANE_Option_Descriptor *options[] = {&option};
+  SANE_Word value = 123;
+  void *values[] = {&value};
+  SANEI_Config config = {1, options, values};
+  unsigned int i;
+
+  option.name = "malformed";
+  option.size = sizeof (value);
+  option.constraint_type = SANE_CONSTRAINT_NONE;
+  for (i = 0; i < sizeof (types) / sizeof (types[0]); i++)
+    {
+      SANE_Status status;
+      option.type = types[i];
+      status = sanei_configure_attach (CONFIG_PATH "/data/malformed-value.conf",
+                                      &config, NULL, NULL);
+      assert (status == SANE_STATUS_INVAL);
+      assert (value == 123);
+    }
 }
 
 
@@ -883,6 +945,7 @@ sanei_config_suite (void)
   wrong_string_list_option ();
   wrong_bool_option ();
   wrong_fixed_option ();
+  malformed_option_values ();
 
   /* backend real conf inspired cases */
   umax_pp ();
@@ -900,6 +963,7 @@ main (void)
 
   /* run suites */
   sanei_config_suite ();
+  free (lastdevname);
 
   return 0;
 }

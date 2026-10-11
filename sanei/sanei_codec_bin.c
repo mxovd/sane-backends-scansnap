@@ -114,10 +114,11 @@ bin_w_word (Wire *w, void *v)
       break;
 
     case WIRE_DECODE:
-      val = (  ((w->buffer.curr[0] & 0xff) << 24)
-	     | ((w->buffer.curr[1] & 0xff) << 16)
-	     | ((w->buffer.curr[2] & 0xff) <<  8)
-	     | ((w->buffer.curr[3] & 0xff) <<  0));
+      /* Shift unsigned bytes so words with the high bit set are defined. */
+      val = (  ((w->buffer.curr[0] & 0xffU) << 24)
+	     | ((w->buffer.curr[1] & 0xffU) << 16)
+	     | ((w->buffer.curr[2] & 0xffU) <<  8)
+	     | ((w->buffer.curr[3] & 0xffU) <<  0));
       *word = val;
       w->buffer.curr += 4;
       break;

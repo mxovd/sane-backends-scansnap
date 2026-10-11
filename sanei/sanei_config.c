@@ -330,7 +330,7 @@ sanei_configure_attach (const char *config_file, SANEI_Config * config,
 			{
 			  DBG (2,
 			       "sanei_configure_attach: couldn't find a string to parse");
-			  return SANE_STATUS_INVAL;
+			  goto invalid_value;
 			}
 		      wa[j] = strtol (string, NULL, 0);
 		      free (string);
@@ -348,7 +348,7 @@ sanei_configure_attach (const char *config_file, SANEI_Config * config,
 			{
 			  DBG (2,
 			       "sanei_configure_attach: couldn't find a string to parse");
-			  return SANE_STATUS_INVAL;
+			  goto invalid_value;
 			}
 		      if ((strcmp (string, "1") == 0)
 			  || (strcmp (string, "true") == 0))
@@ -364,7 +364,7 @@ sanei_configure_attach (const char *config_file, SANEI_Config * config,
 			    {
 			      DBG (2,
 				   "sanei_configure_attach: couldn't find a valid boolean value");
-			      return SANE_STATUS_INVAL;
+			      goto invalid_value;
 			    }
 			}
 		      free (string);
@@ -382,7 +382,7 @@ sanei_configure_attach (const char *config_file, SANEI_Config * config,
 			{
 			  DBG (2,
 			       "sanei_configure_attach: couldn't find a string to parse");
-			  return SANE_STATUS_INVAL;
+			  goto invalid_value;
 			}
 		      wa[j] = SANE_FIX(strtod (string, NULL));
 		      free (string);
@@ -394,7 +394,7 @@ sanei_configure_attach (const char *config_file, SANEI_Config * config,
 		    {
 		      DBG (2,
 			   "sanei_configure_attach: couldn't find a string value to parse");
-		      return SANE_STATUS_INVAL;
+		      goto invalid_value;
 		    }
 		  value = string;
 		  size=strlen(string)+1;
@@ -455,4 +455,11 @@ sanei_configure_attach (const char *config_file, SANEI_Config * config,
   fclose (fp);
   DBG (3, "sanei_configure_attach: exit\n");
   return status;
+
+invalid_value:
+  free (string);
+  free (value);
+  free (token);
+  fclose (fp);
+  return SANE_STATUS_INVAL;
 }
