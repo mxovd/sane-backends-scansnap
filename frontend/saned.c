@@ -617,11 +617,12 @@ check_v4_in_range (struct sockaddr_in *sin, char *base_ip, char *netmask)
   /* Build a bitmask out of the CIDR value */
   for (i = 3; cidr >= 0; i--)
     {
-      mask |= (0xff << (8 * i));
+      mask |= (0xffU << (8 * i));
       cidr -= 8;
     }
 
-  if (cidr < 0)
+  /* A /32 mask has no partial byte left to shift. */
+  if (i >= 0 && cidr < 0)
     mask |= (cidrtomask[cidr + 8] << (8 * i));
 
   mask = htonl (mask);
@@ -687,7 +688,8 @@ check_v6_in_range (struct sockaddr_in6 *sin6, char *base_ip, char *netmask)
       cidr -= 8;
     }
 
-  if (cidr < 0)
+  /* A /128 mask already fills all sixteen bytes. */
+  if (i < 16 && cidr < 0)
     mask[i] = cidrtomask[cidr + 8];
 
   /* get a sockaddr_in6 representing the base IP address */
@@ -748,11 +750,12 @@ check_v4_in_range (struct in_addr *inaddr, struct in_addr *base, char *netmask)
   /* Build a bitmask out of the CIDR value */
   for (i = 3; cidr >= 0; i--)
     {
-      mask |= (0xff << (8 * i));
+      mask |= (0xffU << (8 * i));
       cidr -= 8;
     }
 
-  if (cidr < 0)
+  /* A /32 mask has no partial byte left to shift. */
+  if (i >= 0 && cidr < 0)
     mask |= (cidrtomask[cidr + 8] << (8 * i));
 
   mask = htonl (mask);
