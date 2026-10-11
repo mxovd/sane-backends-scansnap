@@ -88,3 +88,6 @@ udev/libsane.rules: sane-desc$(BUILD_EXEEXT) $(descriptions)
 hal/libsane.fdi: sane-desc$(BUILD_EXEEXT) $(descriptions)
 	@./sane-desc$(BUILD_EXEEXT) -m hal -s ${top_srcdir}/doc/descriptions:${top_srcdir}/doc/descriptions-external \
 	   -d 0 > $@
+
+EXTRA_DIST += scansnap/README.md scansnap/scansnap_discover.py \
+              scansnap/scansnap_session.py scansnap/scansnap_scan.py

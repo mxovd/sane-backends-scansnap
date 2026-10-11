@@ -1,0 +1,59 @@
+name: ScanSnap build and offline tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [backend, full, sanitizers]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake autoconf-archive libtool gettext pkg-config python3 libjpeg-dev libpng-dev libtiff-dev libusb-1.0-0-dev libavahi-client-dev libcurl4-gnutls-dev libxml2-dev libieee1284-3-dev libgphoto2-dev libsnmp-dev libsystemd-dev libpoppler-glib-dev libglib2.0-dev
+      - name: Check whitespace
+        run: git show --format= --check HEAD && git diff --check
+      - name: Python protocol tests
+        run: python3 -m unittest discover -s testsuite/backend/scansnap -p 'test_scansnap_*.py' -v
+      - name: Bootstrap
+        run: ./autogen.sh
+      - name: Configure
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir build
+          cd build
+          case "$VARIANT" in
+            backend) ../configure BACKENDS=scansnap ;;
+            full) ../configure --enable-pnm-backend ;;
+            sanitizers)
+              ../configure BACKENDS=scansnap \
+                CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' \
+                CXXFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' \
+                LDFLAGS='-fsanitize=address,undefined' ;;
+          esac
+      - name: Build and check
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          make -C build -j2
+          make -C build -j2 check VERBOSE=1
+      - name: Preserve test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ matrix.variant }}
+          path: |
+            build/config.log
+            build/testsuite/**/*.log
+            build/testsuite/**/*.trs

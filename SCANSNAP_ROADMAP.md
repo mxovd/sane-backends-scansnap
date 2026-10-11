@@ -30,8 +30,8 @@ scansnap:net:SCANNER_IP:adf
 scansnap:net:SCANNER_IP:return
 ```
 
-The protocol test suite currently has 23 passing Python tests. The tests and
-reverse-engineering tools still need to be moved into this Git repository.
+The repository now contains 23 Python protocol tests and 23 offline C replay
+cases, together with the Python protocol-development tools.
 
 ## Current implementation
 
@@ -69,28 +69,27 @@ and object files are not required at runtime.
 - Grayscale and monochrome are not implemented.
 - Scanner-side deskew and automatic orientation are not exposed.
 - Encrypted or password-protected sessions are not implemented.
-- A scan is acquired and decoded synchronously inside `sane_start()`.
-- Cancellation cannot currently interrupt an in-progress network operation.
+- Acquisition and decoding run synchronously inside `sane_start()`; NAPS2 cancellation has been tested successfully, but transport-level interruption behavior still needs implementation review.
 - Both duplex sides are held in memory until delivered.
-- Multi-sheet ADF behavior has not been fully validated through NAPS2.
 - Error recovery after disconnects and timeouts needs broader testing.
 
 ## Immediate milestone: reliable NAPS2 operation
 
-Test the native NAPS2 package end to end with:
+Validated by the user with the native NAPS2 package:
 
 - ADF simplex
 - ADF duplex
 - Return Path simplex
 - Return Path duplex
-- multiple sheets in the ADF
-- PDF creation and page ordering
+- multiple sheets in the ADF (tested up to two sheets)
+- PDF creation and correct page ordering
 - repeated scans without restarting NAPS2
 - cancellation during acquisition
-- empty feeder
-- open cover
-- scanner busy
-- network disconnect and reconnect
+- empty feeder reporting
+- scanner-busy handling from a second NAPS2 instance (`The selected scanner is busy`)
+
+The NAPS2 validation milestone is complete.
+- network disconnect and reconnect — NAPS2 reported the scanner offline; after the scanner reconnected and its indicator became solid, scanning worked without restarting NAPS2
 
 The backend deliberately exports Return Path as a separate logical device.
 This works around frontends that normalize every scanner source to generic
@@ -98,24 +97,22 @@ This works around frontends that normalize every scanner source to generic
 
 ## Repository and test infrastructure
 
-Move the Python tools and tests into the repository:
+Implemented:
 
-```text
-tools/scansnap/scansnap_discover.py
-tools/scansnap/scansnap_session.py
-tools/scansnap/scansnap_scan.py
-testsuite/backend/scansnap/
-```
+- Python tools in `tools/scansnap/`
+- Python tests, C replay tests, and sanitized status/capability fixtures in
+  `testsuite/backend/scansnap/`
+- both suites integrated into `make check` and source distributions
+- GitHub Actions in `.github/workflows/scansnap.yml` for a ScanSnap-only build,
+  complete configured SANE tree build, Python and C tests, `make check`,
+  whitespace checks, and AddressSanitizer/UndefinedBehaviorSanitizer builds
 
-Add continuous integration that performs:
-
-- backend-only build
-- complete SANE tree build
-- Python protocol tests
-- C protocol tests using recorded, sanitized wire fixtures
-- `make check`
-- `git diff --check`
-- AddressSanitizer and UndefinedBehaviorSanitizer builds
+Local validation: all 23 Python tests and 23 C replay cases pass, including
+C with ASan/UBSan (leak detection disabled because the local sandbox runs under
+tracing). Clean bootstrap and full-tree `make check` still need a run in CI or
+an environment with `autoconf-archive`; that dependency is absent locally.
+CI enables leak detection. See `testsuite/backend/scansnap/README.md` for
+commands, fixture provenance, coverage and remaining hardware-test limits.
 
 Do not commit APKs, decompiled application files, scanner output images,
 personal documents, packet captures containing private data, or generated
@@ -227,5 +224,7 @@ v0.4  USB support
 v1.0  Upstream-ready backend
 ```
 
-The next concrete work is NAPS2 PDF validation, followed by multi-sheet ADF
-and cancellation testing.
+The next concrete work is to confirm the new CI build matrix, then add the
+Arch package described above. Open-cover hardware validation and review of
+transport-level cancellation remain reliability follow-ups; the successful
+NAPS2 busy and reconnect checks do not need to be repeated as prerequisites.

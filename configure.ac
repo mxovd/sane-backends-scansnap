@@ -830,6 +830,7 @@ AC_CONFIG_FILES([Makefile lib/Makefile sanei/Makefile frontend/Makefile \
   japi/Makefile backend/Makefile include/Makefile doc/Makefile \
   po/Makefile.in testsuite/Makefile \
   testsuite/backend/Makefile \
+  testsuite/backend/scansnap/Makefile \
   testsuite/backend/genesys/Makefile \
   testsuite/sanei/Makefile testsuite/tools/Makefile \
   testsuite/saned/Makefile \

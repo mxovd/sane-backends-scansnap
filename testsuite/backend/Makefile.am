@@ -4,8 +4,10 @@
 ##  This file is part of the "Sane" build infra-structure.  See
 ##  included LICENSE file for license information.
 
+SUBDIRS = scansnap
+
 if WITH_GENESYS_TESTS
-SUBDIRS = genesys
+SUBDIRS += genesys
 endif
 
 if have_libavahi

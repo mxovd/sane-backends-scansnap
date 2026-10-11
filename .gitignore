@@ -65,3 +65,9 @@ test-suite.log
 # editor temp files
 *~
 \#*\#
+
+# ScanSnap offline tests
+__pycache__/
+/testsuite/backend/scansnap/scansnap_protocol_test
+/testsuite/backend/scansnap/*.log
+/testsuite/backend/scansnap/*.trs
