@@ -726,10 +726,14 @@ BACKENDS="$FILTERED_BACKENDS"
 BACKEND_LIBS_ENABLED=""
 BACKEND_CONFS_ENABLED=""
 BACKEND_MANS_ENABLED=""
+with_escl_tests=no
 for backend in ${BACKENDS} ; do
   BACKEND_LIBS_ENABLED="${BACKEND_LIBS_ENABLED} libsane-${backend}.la"
   BACKEND_CONFS_ENABLED="${BACKEND_CONFS_ENABLED} ${backend}.conf"
   BACKEND_MANS_ENABLED="${BACKEND_MANS_ENABLED} sane-${backend}.5"
+  if test x$backend = xescl; then
+    with_escl_tests=yes
+  fi
   if test x$backend = xgenesys; then
     with_genesys_tests=yes
   fi
@@ -738,6 +742,7 @@ for backend in ${BACKENDS} ; do
   fi
 done
 AC_SUBST(BACKEND_LIBS_ENABLED)
+AM_CONDITIONAL(WITH_ESCL_TESTS, test xyes = x$with_escl_tests)
 AM_CONDITIONAL(WITH_GENESYS_TESTS, test xyes = x$with_genesys_tests)
 AM_CONDITIONAL(INSTALL_UMAX_PP_TOOLS, test xyes = x$install_umax_pp_tools)
 

@@ -10,9 +10,8 @@ if WITH_GENESYS_TESTS
 SUBDIRS += genesys
 endif
 
-if have_libavahi
-if have_libcurl
-if have_libxml2
+# Backend selection already accounts for eSCL library dependencies.
+if WITH_ESCL_TESTS
 check_PROGRAMS = escl_test
 TESTS = $(check_PROGRAMS)
 
@@ -24,6 +23,4 @@ escl_test_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir) -I$(top_srcdir)/include \
 escl_test_LDADD = ../../backend/libescl.la \
 	$(MATH_LIB) $(libcurl_LIBS) $(XML_LIBS) $(PNG_LIBS) $(JPEG_LIBS) $(TIFF_LIBS) \
 	$(POPPLER_GLIB_LIBS) $(SANEI_THREAD_LIBS)
-endif
-endif
 endif
