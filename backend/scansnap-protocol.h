@@ -47,6 +47,7 @@ typedef struct
   int scanner_fd;
   int trigger_fd;
   int reserved;
+  unsigned int page_id;
 } SsSession;
 
 /* Discover a configured IPv4 target and verify that it is a plain-TCP iX1300. */
@@ -56,6 +57,11 @@ int ss_session_open (SsSession *session, const SsDevice *device,
                      char *error, size_t error_size);
 int ss_hardware_status (SsSession *session, SsHardwareStatus *status,
                         char *error, size_t error_size);
+int ss_scan_begin (SsSession *session, SsFeed feed, int duplex,
+                   char *error, size_t error_size);
+/* Returns 0 for a page, 1 for normal hopper-empty, and -1 on error. */
+int ss_scan_next (SsSession *session, int duplex, SsImage *front,
+                  SsImage *back, char *error, size_t error_size);
 int ss_scan (SsSession *session, SsFeed feed, int duplex,
              SsImage *front, SsImage *back, char *error, size_t error_size);
 void ss_image_free (SsImage *image);

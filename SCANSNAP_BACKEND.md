@@ -9,6 +9,7 @@ Implemented and validated at the protocol level:
 - targeted Wi-Fi discovery and session reservation
 - ADF and return/card feed paths
 - simplex and duplex acquisition
+- multi-sheet ADF jobs (the job stays open until the hopper is empty)
 - 300 dpi color JPEG transport
 - scanner-side automatic document length and cropping
 - conversion to standard SANE RGB frames

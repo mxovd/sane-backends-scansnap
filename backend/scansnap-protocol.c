@@ -640,15 +640,12 @@ failed:
 }
 
 int
-ss_scan (SsSession *session, SsFeed feed, int duplex, SsImage *front,
-         SsImage *back, char *error, size_t error_size)
+ss_scan_begin (SsSession *session, SsFeed feed, int duplex,
+               char *error, size_t error_size)
 {
   uint8_t parameters[80], cdb[6] = {0};
   SsHardwareStatus hardware;
   SsReply reply;
-  int attempt;
-  memset (front, 0, sizeof (*front));
-  memset (back, 0, sizeof (*back));
   if (ss_hardware_status (session, &hardware, error, error_size) < 0)
     return -1;
   if (hardware.cover_open)
@@ -692,6 +689,19 @@ ss_scan (SsSession *session, SsFeed feed, int duplex, SsImage *front,
       return -1;
     }
   reply_free (&reply);
+  session->page_id = 0;
+  return 0;
+}
+
+int
+ss_scan_next (SsSession *session, int duplex, SsImage *front, SsImage *back,
+              char *error, size_t error_size)
+{
+  uint8_t cdb[6] = {0}, sense[18];
+  SsReply reply;
+  int attempt;
+  memset (front, 0, sizeof (*front));
+  memset (back, 0, sizeof (*back));
   for (attempt = 0; attempt < 40; attempt++)
     {
       memset (cdb, 0, sizeof (cdb));
@@ -703,6 +713,18 @@ ss_scan (SsSession *session, SsFeed feed, int duplex, SsImage *front,
         {
           reply_free (&reply);
           break;
+        }
+      if (!reply.status && reply.scanner_status == 2)
+        {
+          reply_free (&reply);
+          if (request_sense (session, sense, error, error_size) < 0)
+            return -1;
+          if ((sense[2] & 0x0f) == 3 && sense[12] == 0x80
+              && sense[13] == 3)
+            return 1; /* Android's client treats ASC/ASCQ 80/03 as hopper empty. */
+          set_error (error, error_size, "START PAPER check condition %02x/%02x/%02x",
+                     sense[2] & 0x0f, sense[12], sense[13]);
+          return -1;
         }
       if (reply.status || reply.scanner_status != 8)
         {
@@ -718,14 +740,28 @@ ss_scan (SsSession *session, SsFeed feed, int duplex, SsImage *front,
       set_error (error, error_size, "scanner remained busy starting paper");
       return -1;
     }
-  if (read_image (session, 0, 1, front, error, error_size) < 0
-      || (duplex && read_image (session, 1, 0, back, error, error_size) < 0))
+  if (read_image (session, (int) session->page_id, 1, front,
+                  error, error_size) < 0
+      || (duplex && read_image (session, (int) session->page_id + 1, 0,
+                                back, error, error_size) < 0))
     {
       ss_image_free (front);
       ss_image_free (back);
       return -1;
     }
+  session->page_id += duplex ? 2U : 1U;
   return 0;
+}
+
+int
+ss_scan (SsSession *session, SsFeed feed, int duplex, SsImage *front,
+         SsImage *back, char *error, size_t error_size)
+{
+  int result = ss_scan_begin (session, feed, duplex, error, error_size);
+  if (result < 0)
+    return result;
+  result = ss_scan_next (session, duplex, front, back, error, error_size);
+  return result == 1 ? -3 : result;
 }
 
 void

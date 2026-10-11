@@ -75,6 +75,8 @@ typedef struct
   int height;
   int scanning;
   int duplex;
+  SsSession session;
+  int job_active;
   SANE_Parameters params;
 } Handle;
 
@@ -387,6 +389,11 @@ sane_close (SANE_Handle opaque)
   Handle *handle = opaque;
   if (!handle) return;
   clear_images (handle);
+  if (handle->job_active)
+    {
+      ss_session_close (&handle->session);
+      handle->job_active = 0;
+    }
   handle->device->open = 0;
   free (handle);
 }
@@ -487,7 +494,6 @@ SANE_Status
 sane_start (SANE_Handle opaque)
 {
   Handle *handle = opaque;
-  SsSession session;
   SsImage front_jpeg, back_jpeg;
   SANE_Status status;
   char error[MAX_ERROR];
@@ -509,21 +515,63 @@ sane_start (SANE_Handle opaque)
     }
   clear_images (handle);
   handle->duplex = !strcmp (handle->source, "ADF Duplex");
-  if (ss_session_open (&session, &handle->device->protocol,
-                       error, sizeof (error)) < 0)
+  if (handle->device->feed == SS_FEED_ADF)
     {
-      DBG (1, "sane_start: %s\n", error);
-      return SANE_STATUS_DEVICE_BUSY;
+      if (!handle->job_active)
+        {
+          if (ss_session_open (&handle->session, &handle->device->protocol,
+                               error, sizeof (error)) < 0)
+            {
+              DBG (1, "sane_start: %s\n", error);
+              return SANE_STATUS_DEVICE_BUSY;
+            }
+          result = ss_scan_begin (&handle->session, SS_FEED_ADF,
+                                  handle->duplex, error, sizeof (error));
+          if (result < 0)
+            {
+              DBG (1, "sane_start: %s\n", error);
+              ss_session_close (&handle->session);
+              if (result == -2) return SANE_STATUS_COVER_OPEN;
+              if (result == -3) return SANE_STATUS_NO_DOCS;
+              return SANE_STATUS_IO_ERROR;
+            }
+          handle->job_active = 1;
+        }
+      result = ss_scan_next (&handle->session, handle->duplex, &front_jpeg,
+                             &back_jpeg, error, sizeof (error));
+      if (result == 1)
+        {
+          ss_session_close (&handle->session);
+          handle->job_active = 0;
+          return SANE_STATUS_NO_DOCS;
+        }
+      if (result < 0)
+        {
+          DBG (1, "sane_start: %s\n", error);
+          ss_session_close (&handle->session);
+          handle->job_active = 0;
+          return SANE_STATUS_IO_ERROR;
+        }
     }
-  result = ss_scan (&session, handle->device->feed, handle->duplex,
-                    &front_jpeg, &back_jpeg, error, sizeof (error));
-  ss_session_close (&session);
-  if (result < 0)
+  else
     {
-      DBG (1, "sane_start: %s\n", error);
-      if (result == -2) return SANE_STATUS_COVER_OPEN;
-      if (result == -3) return SANE_STATUS_NO_DOCS;
-      return SANE_STATUS_IO_ERROR;
+      SsSession session;
+      if (ss_session_open (&session, &handle->device->protocol,
+                           error, sizeof (error)) < 0)
+        {
+          DBG (1, "sane_start: %s\n", error);
+          return SANE_STATUS_DEVICE_BUSY;
+        }
+      result = ss_scan (&session, handle->device->feed, handle->duplex,
+                        &front_jpeg, &back_jpeg, error, sizeof (error));
+      ss_session_close (&session);
+      if (result < 0)
+        {
+          DBG (1, "sane_start: %s\n", error);
+          if (result == -2) return SANE_STATUS_COVER_OPEN;
+          if (result == -3) return SANE_STATUS_NO_DOCS;
+          return SANE_STATUS_IO_ERROR;
+        }
     }
   status = decode_jpeg (&front_jpeg, &handle->front, &handle->front_size,
                         &front_width, &front_height, error, sizeof (error));
@@ -543,6 +591,11 @@ sane_start (SANE_Handle opaque)
     {
       DBG (1, "sane_start: %s\n", error);
       clear_images (handle);
+      if (handle->job_active)
+        {
+          ss_session_close (&handle->session);
+          handle->job_active = 0;
+        }
       return status;
     }
   set_current (handle, handle->front, handle->front_size,
@@ -587,7 +640,15 @@ void
 sane_cancel (SANE_Handle opaque)
 {
   Handle *handle = opaque;
-  if (handle) clear_images (handle);
+  if (handle)
+    {
+      clear_images (handle);
+      if (handle->job_active)
+        {
+          ss_session_close (&handle->session);
+          handle->job_active = 0;
+        }
+    }
 }
 
 SANE_Status
