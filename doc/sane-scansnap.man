@@ -1,0 +1,48 @@
+.TH sane-scansnap 5 "11 Oct 2026" "SANE Scanner Access Now Easy" "Scanner Access Now Easy"
+.SH NAME
+sane-scansnap \- SANE backend for ScanSnap network scanners
+.SH DESCRIPTION
+The
+.B sane-scansnap
+library implements a SANE backend for the PFU ScanSnap iX1300 using its local
+Wi-Fi protocol.  The current implementation supports 300 dpi color scanning,
+simplex and duplex acquisition, automatic document length, and automatic page
+cropping.
+.PP
+The ADF and return/card feed are exported as separate logical devices.  This
+allows frontends which only understand generic feeder and duplex sources to
+select either physical path.
+.SH CONFIGURATION
+The configuration file is
+.IR @CONFIGDIR@/scansnap.conf .
+Add one line for each scanner, using a stable IPv4 address:
+.PP
+.RS
+.B net 192.168.0.145
+.RE
+.PP
+The scanner and host must be on the same local network.  The address should be
+reserved in DHCP because this backend does not yet perform untargeted network
+discovery.
+.SH FILES
+.TP
+.I @CONFIGDIR@/scansnap.conf
+Backend configuration file.
+.TP
+.I @LIBDIR@/libsane-scansnap.a
+Static library implementing this backend.
+.TP
+.I @LIBDIR@/libsane-scansnap.so
+Shared library implementing this backend.
+.SH ENVIRONMENT
+.TP
+.B SANE_DEBUG_SCANSNAP
+Controls backend debug output.  Higher values increase verbosity.
+.SH LIMITATIONS
+Only the ScanSnap iX1300 Wi-Fi transport is currently supported.  USB,
+grayscale, monochrome, other resolutions, encrypted protocol mode, and scanner
+configuration are not implemented yet.  Deskew, OCR, page editing, and PDF
+creation are expected to be performed by the SANE frontend.
+.SH SEE ALSO
+.BR sane (7),
+.BR scanimage (1)

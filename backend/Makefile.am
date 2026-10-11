@@ -82,7 +82,7 @@ BACKEND_CONFS= abaton.conf agfafocus.conf apple.conf artec.conf \
 	       p5.conf \
 	       pie.conf pieusb.conf pixma.conf plustek.conf plustek_pp.conf \
 	       qcam.conf ricoh.conf rts8891.conf s9036.conf sceptre.conf \
-	       sharp.conf sm3840.conf snapscan.conf sp15c.conf \
+	       sharp.conf sm3840.conf scansnap.conf snapscan.conf sp15c.conf \
 	       st400.conf stv680.conf tamarack.conf \
 	       teco1.conf teco2.conf teco3.conf test.conf \
 	       u12.conf umax1220u.conf umax.conf umax_pp.conf v4l.conf \
@@ -182,7 +182,7 @@ be_convenience_libs = libabaton.la libagfafocus.la \
     libplustek.la libplustek_pp.la libpnm.la \
     libqcam.la libricoh.la libricoh2.la librts8891.la \
     libs9036.la libsceptre.la libsharp.la \
-    libsm3600.la libsm3840.la libsnapscan.la \
+    libsm3600.la libsm3840.la libscansnap.la libsnapscan.la \
     libsp15c.la libst400.la libstv680.la \
     libtamarack.la libtest.la libteco1.la \
     libteco2.la libteco3.la libu12.la libumax.la \
@@ -217,7 +217,7 @@ be_dlopen_libs = libsane-abaton.la libsane-agfafocus.la \
     libsane-plustek.la libsane-plustek_pp.la libsane-pnm.la \
     libsane-qcam.la libsane-ricoh.la libsane-ricoh2.la libsane-rts8891.la \
     libsane-s9036.la libsane-sceptre.la libsane-sharp.la \
-    libsane-sm3600.la libsane-sm3840.la libsane-snapscan.la \
+    libsane-sm3600.la libsane-sm3840.la libsane-scansnap.la libsane-snapscan.la \
     libsane-sp15c.la libsane-st400.la libsane-stv680.la \
     libsane-tamarack.la libsane-test.la libsane-teco1.la \
     libsane-teco2.la libsane-teco3.la libsane-u12.la libsane-umax.la \
@@ -754,6 +754,21 @@ libsane_fujitsu_la_LIBADD = $(COMMON_LIBS) \
     ../sanei/sanei_magic.lo \
     $(MATH_LIB) $(SCSI_LIBS) $(USB_LIBS) $(RESMGR_LIBS)
 EXTRA_DIST += fujitsu.conf.in
+
+libscansnap_la_SOURCES = scansnap.c scansnap-protocol.c scansnap-protocol.h
+libscansnap_la_CPPFLAGS = $(AM_CPPFLAGS) -DBACKEND_NAME=scansnap
+
+nodist_libsane_scansnap_la_SOURCES = scansnap-s.c
+libsane_scansnap_la_CPPFLAGS = $(AM_CPPFLAGS) -DBACKEND_NAME=scansnap
+libsane_scansnap_la_LDFLAGS = $(DIST_SANELIBS_LDFLAGS)
+libsane_scansnap_la_LIBADD = $(COMMON_LIBS) \
+    libscansnap.la \
+    ../sanei/sanei_init_debug.lo \
+    ../sanei/sanei_constrain_value.lo \
+    ../sanei/sanei_config.lo \
+    sane_strstatus.lo \
+    $(JPEG_LIBS) $(SOCKET_LIBS)
+EXTRA_DIST += scansnap.conf.in
 
 libgenesys_la_SOURCES = genesys/genesys.cpp genesys/genesys.h \
     genesys/calibration.h \

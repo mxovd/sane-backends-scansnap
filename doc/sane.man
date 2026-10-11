@@ -285,6 +285,11 @@ Supports most Fujitsu SCSI and USB, flatbed and adf scanners. See
 .BR sane\-fujitsu (5)
 for details.
 .TP
+.B scansnap
+Supports the ScanSnap iX1300 over its local Wi-Fi protocol. See
+.BR sane\-scansnap (5)
+for details.
+.TP
 .B genesys
 Supports several scanners based on the Genesys Logic
 GL646, GL841, GL843, GL847 and GL124 chips like the
@@ -932,6 +937,7 @@ for details).
 .BR sane\-epson2 (5),
 .BR sane\-escl (5),
 .BR sane\-fujitsu (5),
+.BR sane\-scansnap (5),
 .BR sane\-genesys (5),
 .BR sane\-gphoto2 (5),
 .BR sane\-gt68xx (5),

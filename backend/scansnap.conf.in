@@ -1,0 +1,5 @@
+# ScanSnap iX1300 network backend configuration.
+# Add the scanner's reserved IPv4 address. Each target appears as separate
+# ADF and Return Path devices so frontends with generic source names can use it.
+#
+# net 192.168.0.145
