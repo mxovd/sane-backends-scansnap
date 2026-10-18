@@ -65,8 +65,10 @@ and object files are not required at runtime.
 
 - Wi-Fi only; USB is not implemented.
 - The scanner address must be configured explicitly.
-- Only 300 dpi color scanning is implemented.
-- Grayscale and monochrome are not implemented.
+- Only 300 dpi acquisition is implemented.
+- Gray and Lineart output use host conversion of color JPEGs; native scanner
+  grayscale and monochrome acquisition remain unvalidated.
+- Gray/Lineart output has offline coverage but needs frontend/hardware validation.
 - Scanner-side deskew and automatic orientation are not exposed.
 - Encrypted or password-protected sessions are not implemented.
 - Acquisition and decoding run synchronously inside `sane_start()`; NAPS2 cancellation has been tested successfully, but transport-level interruption behavior still needs implementation review.
@@ -154,8 +156,8 @@ Before adding many scan options:
 Reverse, implement, and validate features individually in this order:
 
 1. 200 and 600 dpi
-2. grayscale
-3. monochrome
+2. native grayscale acquisition (host output conversion implemented)
+3. native monochrome acquisition (host output conversion implemented)
 4. scanner-side deskew
 5. automatic orientation
 6. blank-page detection

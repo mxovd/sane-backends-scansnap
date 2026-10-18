@@ -12,7 +12,7 @@ Implemented and validated at the protocol level:
 - multi-sheet ADF jobs (the job stays open until the hopper is empty)
 - 300 dpi color JPEG transport
 - scanner-side automatic document length and cropping
-- conversion to standard SANE RGB frames
+- conversion to standard SANE RGB, 8-bit grayscale, and 1-bit lineart frames
 
 The backend exports two logical devices so applications which normalize source
 names, including NAPS2, can still select the physical feed path:
@@ -129,7 +129,7 @@ naps2
 
 In NAPS2, create a profile using **SANE Driver**. Choose **PFU ScanSnap iX1300
 ADF** for ordinary sheets or **PFU ScanSnap iX1300 Return Path** for the card
-slot. Choose **Feeder** for simplex or **Duplex** for both sides, with **Color**
+slot. Choose **Feeder** for simplex or **Duplex** for both sides, with **Color**, **Grayscale**, or **Black and White**
 and **300 dpi**. Once installed system-wide, start NAPS2 normally without the
 environment variables.
 
@@ -141,8 +141,24 @@ naps2 console --listdevices --driver sane
 
 ## Current limits
 
-Only the iX1300 Wi-Fi transport, 300 dpi, and color mode are implemented.
-USB, encrypted protocol mode, grayscale, monochrome, and additional resolutions
-still need protocol validation. Deskew, OCR, page editing, and PDF creation are
+The iX1300 Wi-Fi transport supports 300 dpi Color, Gray, and Lineart modes.
+Gray uses JPEG luminance decoding; Lineart converts that luminance to 1-bit
+black-and-white with a fixed threshold of 128 (darker pixels are black).
+All modes acquire color JPEGs from the scanner and convert on the host, so
+grayscale and lineart do not reduce network traffic. Native scanner grayscale
+and monochrome commands, USB, encrypted protocol mode, and additional
+resolutions still need protocol validation.
+
+Select the output mode from the command line with `--mode Gray` or
+`--mode Lineart`, for example:
+
+```sh
+scanimage -d 'scansnap:net:192.168.0.145:adf' \
+  --source 'ADF Front' --mode Gray --format=png > gray.png
+scanimage -d 'scansnap:net:192.168.0.145:adf' \
+  --source 'ADF Front' --mode Lineart --format=png > black-white.png
+```
+
+Deskew, OCR, page editing, and PDF creation are
 left to the frontend. The scanner's automatic document sizing and cropping are
 enabled for every scan.

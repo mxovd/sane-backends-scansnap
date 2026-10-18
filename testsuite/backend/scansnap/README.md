@@ -39,7 +39,11 @@ wraps the hardware payloads in synthetic command-reply headers. The Python
 suite also decodes the VPD payload. Other replies, errors and JPEG marker
 sequences are synthetic and are not represented as hardware captures.
 
-No actual JPEG document is included. These tests check transport assembly,
-not JPEG decoding or live timing. Discovery/reservation sockets and real
+No actual JPEG document is included. The protocol replays check transport
+assembly. When libjpeg is available, `scansnap_image_test` generates synthetic
+JPEGs and checks RGB, grayscale, and lineart decoding, frame parameters,
+single-byte reads, odd-width row padding, black/white polarity, and option
+locking for pending duplex pages and active jobs. These tests do not check
+live timing. Discovery/reservation sockets and real
 cancellation, reconnect behavior and frontend integration still require
 additional tests; offline replay does not replace hardware validation.

@@ -11,3 +11,12 @@ EXTRA_DIST = README.md python-tests.sh test_scansnap_discover.py \
     test_scansnap_session.py test_scansnap_scan.py \
     fixtures/hardware_idle.hex fixtures/hardware_adf.hex \
     fixtures/hardware_return.hex fixtures/vpd.hex
+
+if HAVE_JPEG
+check_PROGRAMS += scansnap_image_test
+scansnap_image_test_SOURCES = scansnap_image_test.c \
+    ../../../backend/scansnap-protocol.c
+EXTRA_scansnap_image_test_SOURCES = ../../../backend/scansnap.c
+scansnap_image_test_LDADD = ../../../sanei/libsanei.la ../../../lib/liblib.la \
+    $(JPEG_LIBS) $(SOCKET_LIBS)
+endif

@@ -96,7 +96,8 @@ static const SANE_String_Const source_list[] = {
   "ADF Front", "ADF Duplex", NULL
 };
 static const SANE_String_Const mode_list[] = {
-  SANE_VALUE_SCAN_MODE_COLOR, NULL
+  SANE_VALUE_SCAN_MODE_COLOR, SANE_VALUE_SCAN_MODE_GRAY,
+  SANE_VALUE_SCAN_MODE_LINEART, NULL
 };
 static const SANE_Word resolution_list[] = { 1, 300 };
 
@@ -118,12 +119,14 @@ jpeg_error_exit (j_common_ptr info)
 }
 
 static SANE_Status
-decode_jpeg (const SsImage *jpeg, uint8_t **pixels, size_t *size,
+decode_jpeg (const SsImage *jpeg, const char *mode, uint8_t **pixels, size_t *size,
              int *width, int *height, char *message, size_t message_size)
 {
   struct jpeg_decompress_struct info;
   JpegError error;
-  uint8_t *output = NULL;
+  uint8_t * volatile output = NULL;
+  int color = !strcmp (mode, SANE_VALUE_SCAN_MODE_COLOR);
+  int lineart = !strcmp (mode, SANE_VALUE_SCAN_MODE_LINEART);
   size_t row_bytes, output_size;
 
   memset (&info, 0, sizeof (info));
@@ -139,12 +142,12 @@ decode_jpeg (const SsImage *jpeg, uint8_t **pixels, size_t *size,
   jpeg_create_decompress (&info);
   jpeg_mem_src (&info, jpeg->data, jpeg->length);
   jpeg_read_header (&info, TRUE);
-  info.out_color_space = JCS_RGB;
+  info.out_color_space = color ? JCS_RGB : JCS_GRAYSCALE;
   jpeg_start_decompress (&info);
-  if (!info.output_width || !info.output_height || info.output_components != 3
+  if (!info.output_width || !info.output_height || info.output_components != (color ? 3 : 1)
       || info.output_width > 20000 || info.output_height > 100000)
     ERREXIT (&info, JERR_BAD_STATE);
-  row_bytes = (size_t) info.output_width * 3;
+  row_bytes = (size_t) info.output_width * (color ? 3 : 1);
   if (info.output_height > SIZE_MAX / row_bytes)
     ERREXIT (&info, JERR_OUT_OF_MEMORY);
   output_size = row_bytes * info.output_height;
@@ -162,6 +165,23 @@ decode_jpeg (const SsImage *jpeg, uint8_t **pixels, size_t *size,
   *height = (int) info.output_height;
   jpeg_finish_decompress (&info);
   jpeg_destroy_decompress (&info);
+  if (lineart)
+    {
+      size_t y, x, packed_row = ((size_t) *width + 7) / 8;
+      /* SANE lineart is MSB first, with 1 = black and 0 = white.
+         Pack in place; destination bytes never overwrite unread pixels. */
+      for (y = 0; y < (size_t) *height; y++)
+        for (x = 0; x < packed_row; x++)
+          {
+            unsigned int bit;
+            uint8_t byte = 0;
+            for (bit = 0; bit < 8 && x * 8 + bit < (size_t) *width; bit++)
+              if (output[y * row_bytes + x * 8 + bit] < 128)
+                byte |= 0x80 >> bit;
+            output[y * packed_row + x] = byte;
+          }
+      output_size = packed_row * (size_t) *height;
+    }
   *pixels = output;
   *size = output_size;
   return SANE_STATUS_GOOD;
@@ -437,6 +457,7 @@ sane_control_option (SANE_Handle opaque, SANE_Int index, SANE_Action action,
   if (action != SANE_ACTION_SET_VALUE
       || !(handle->options[index].cap & SANE_CAP_SOFT_SELECT))
     return SANE_STATUS_INVAL;
+  if (handle->job_active || handle->back) return SANE_STATUS_DEVICE_BUSY;
   status = sanei_constrain_value (&handle->options[index], value, &changes);
   if (status != SANE_STATUS_GOOD) return status;
   switch (index)
@@ -445,7 +466,10 @@ sane_control_option (SANE_Handle opaque, SANE_Int index, SANE_Action action,
       strcpy (handle->source, value);
       changes |= SANE_INFO_RELOAD_PARAMS;
       break;
-    case OPT_MODE: strcpy (handle->mode, value); break;
+    case OPT_MODE:
+      strcpy (handle->mode, value);
+      changes |= SANE_INFO_RELOAD_PARAMS;
+      break;
     case OPT_RESOLUTION: handle->resolution = *(SANE_Word *) value; break;
     default: return SANE_STATUS_INVAL;
     }
@@ -463,9 +487,11 @@ sane_get_parameters (SANE_Handle opaque, SANE_Parameters *parameters)
   else
     {
       memset (parameters, 0, sizeof (*parameters));
-      parameters->format = SANE_FRAME_RGB;
+      parameters->format = !strcmp (handle->mode, SANE_VALUE_SCAN_MODE_COLOR)
+        ? SANE_FRAME_RGB : SANE_FRAME_GRAY;
       parameters->last_frame = SANE_TRUE;
-      parameters->depth = 8;
+      parameters->depth = !strcmp (handle->mode, SANE_VALUE_SCAN_MODE_LINEART)
+        ? 1 : 8;
       parameters->lines = -1;
     }
   return SANE_STATUS_GOOD;
@@ -480,14 +506,18 @@ set_current (Handle *handle, uint8_t *pixels, size_t size, int width, int height
   handle->width = width;
   handle->height = height;
   handle->scanning = 1;
-  handle->params.format = SANE_FRAME_RGB;
+  handle->params.format = !strcmp (handle->mode, SANE_VALUE_SCAN_MODE_COLOR)
+    ? SANE_FRAME_RGB : SANE_FRAME_GRAY;
   /* Each duplex side is a complete image.  A false last_frame is reserved
      for multiple frames that make up one image, such as separate RGB planes. */
   handle->params.last_frame = SANE_TRUE;
-  handle->params.bytes_per_line = width * 3;
+  handle->params.bytes_per_line =
+    !strcmp (handle->mode, SANE_VALUE_SCAN_MODE_LINEART) ? (width + 7) / 8
+    : handle->params.format == SANE_FRAME_RGB ? width * 3 : width;
   handle->params.pixels_per_line = width;
   handle->params.lines = height;
-  handle->params.depth = 8;
+  handle->params.depth = !strcmp (handle->mode, SANE_VALUE_SCAN_MODE_LINEART)
+    ? 1 : 8;
 }
 
 SANE_Status
@@ -573,12 +603,12 @@ sane_start (SANE_Handle opaque)
           return SANE_STATUS_IO_ERROR;
         }
     }
-  status = decode_jpeg (&front_jpeg, &handle->front, &handle->front_size,
+  status = decode_jpeg (&front_jpeg, handle->mode, &handle->front, &handle->front_size,
                         &front_width, &front_height, error, sizeof (error));
   ss_image_free (&front_jpeg);
   if (status == SANE_STATUS_GOOD && handle->duplex)
     {
-      status = decode_jpeg (&back_jpeg, &handle->back, &handle->back_size,
+      status = decode_jpeg (&back_jpeg, handle->mode, &handle->back, &handle->back_size,
                             &back_width, &back_height, error, sizeof (error));
       if (status == SANE_STATUS_GOOD)
         {

@@ -5,13 +5,20 @@ sane-scansnap \- SANE backend for ScanSnap network scanners
 The
 .B sane-scansnap
 library implements a SANE backend for the PFU ScanSnap iX1300 using its local
-Wi-Fi protocol.  The current implementation supports 300 dpi color scanning,
+Wi-Fi protocol.  The current implementation supports 300 dpi color, grayscale, and black-and-white scanning,
 simplex and duplex acquisition, automatic document length, and automatic page
 cropping.
 .PP
 The ADF and return/card feed are exported as separate logical devices.  This
 allows frontends which only understand generic feeder and duplex sources to
 select either physical path.
+.SH SCAN MODES
+The mode option accepts Color (24-bit RGB), Gray (8-bit grayscale), and
+Lineart (1-bit black-and-white). All modes acquire a color JPEG from the
+scanner. Gray decodes its luminance on the host; Lineart applies a fixed
+threshold of 128, with darker pixels rendered black. These output modes do
+not reduce network traffic. Both feed paths support all three modes in
+simplex and duplex operation.
 .SH CONFIGURATION
 The configuration file is
 .IR @CONFIGDIR@/scansnap.conf .
@@ -40,7 +47,8 @@ Shared library implementing this backend.
 Controls backend debug output.  Higher values increase verbosity.
 .SH LIMITATIONS
 Only the ScanSnap iX1300 Wi-Fi transport is currently supported.  USB,
-grayscale, monochrome, other resolutions, encrypted protocol mode, and scanner
+native scanner grayscale/monochrome commands, other resolutions, encrypted
+protocol mode, and scanner
 configuration are not implemented yet.  Deskew, OCR, page editing, and PDF
 creation are expected to be performed by the SANE frontend.
 .SH SEE ALSO
