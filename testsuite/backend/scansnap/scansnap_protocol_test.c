@@ -270,6 +270,60 @@ scan_tests (void)
     }
 }
 
+/* Synthetic discovery reply from the documentation address 192.0.2.10. */
+static void
+discovery_reply (unsigned char reply[144])
+{
+  memset (reply, 0, 144);
+  memcpy (reply, "VENS", 4);
+  reply[9] = 16;
+  reply[11] = 48;
+  memcpy (reply + 16, "\xc0\x00\x02\x0a", 4);
+  put32 (reply + 20, 53218);
+  put32 (reply + 24, 53219);
+  memcpy (reply + 104, "ScanSnap iX1300 ", 16);
+  memcpy (reply + 132, "TEST000001", 10);
+}
+
+static void
+discovery_tests (void)
+{
+  unsigned char reply[144];
+  struct in_addr peer, other;
+  SsDevice device;
+  CHECK (inet_pton (AF_INET, "192.0.2.10", &peer) == 1);
+  CHECK (inet_pton (AF_INET, "192.0.2.11", &other) == 1);
+
+  discovery_reply (reply);
+  CHECK (parse_discovery_reply (reply, sizeof (reply), &peer, &device) == 0);
+  CHECK (!strcmp (device.ip, "192.0.2.10"));
+  CHECK (!strcmp (device.product, "ScanSnap iX1300"));
+  CHECK (!strcmp (device.serial, "TEST000001"));
+  CHECK (device.scanner_port == 53218 && device.application_port == 53219);
+  CHECK (!memcmp (device.magic, "VENS", 4));
+
+  /* Truncated datagrams and other senders' payloads are not replies. */
+  CHECK (parse_discovery_reply (reply, 143, &peer, &device) == 1);
+  /* The reply must describe the host that sent it. */
+  CHECK (parse_discovery_reply (reply, sizeof (reply), &other, &device) == 2);
+  reply[0] = 'X';
+  CHECK (parse_discovery_reply (reply, sizeof (reply), &peer, &device) == 2);
+  discovery_reply (reply);
+  put32 (reply + 20, 65536);
+  CHECK (parse_discovery_reply (reply, sizeof (reply), &peer, &device) == 2);
+
+  /* Other models, encrypted mode, and missing ports are unsupported. */
+  discovery_reply (reply);
+  memcpy (reply + 104, "ScanSnap iX1600 ", 16);
+  CHECK (parse_discovery_reply (reply, sizeof (reply), &peer, &device) == 3);
+  discovery_reply (reply);
+  reply[36] |= 8;
+  CHECK (parse_discovery_reply (reply, sizeof (reply), &peer, &device) == 3);
+  discovery_reply (reply);
+  put32 (reply + 24, 0);
+  CHECK (parse_discovery_reply (reply, sizeof (reply), &peer, &device) == 3);
+}
+
 int
 main (void)
 {
@@ -277,6 +331,7 @@ main (void)
   malformed_tests ();
   begin_tests ();
   scan_tests ();
-  puts ("ScanSnap: 23 offline C replay cases passed");
+  discovery_tests ();
+  puts ("ScanSnap: 23 offline C replay cases and 8 discovery cases passed");
   return 0;
 }

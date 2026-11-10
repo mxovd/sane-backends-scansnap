@@ -28,9 +28,38 @@ Add one line for each scanner, using a stable IPv4 address:
 .B net 192.168.0.145
 .RE
 .PP
-The scanner and host must be on the same local network.  The address should be
-reserved in DHCP because this backend does not yet perform untargeted network
-discovery.
+The scanner and host must be on the same local network.  A fixed address
+should be reserved in DHCP.  Alternatively, search the local networks each
+time the backend starts, so the scanner is found at whatever address it has:
+.PP
+.RS
+.B net auto
+.RE
+.PP
+The search broadcasts on every local network and lists each scanner that
+answers.  Replies arrive on UDP port 55274, which a host firewall must allow
+from the local network; a fixed address needs no firewall rule.
+.PP
+The following settings apply to every configured scanner, wherever they
+appear in the file:
+.TP
+.BR "rotate adf" | return " 0" | 180
+Rotate every page scanned through that feed path by 180 degrees.  Use
+.B 180
+when sheets are loaded bottom edge first, for example with the text upright
+and facing you in the ADF paper chute.  The default,
+.BR 0 ,
+matches sheets loaded top edge first as the scanner manual describes.  The
+.B rotate
+option overrides this for a single scan, for example
+.BR "scanimage \-\-rotate=no" .
+.TP
+.BR return-path " yes" | no
+With
+.BR no ,
+only the ADF device is listed and the Return Path device is hidden.  The
+default is
+.BR yes .
 .SH FILES
 .TP
 .I @CONFIGDIR@/scansnap.conf

@@ -52,6 +52,10 @@ typedef struct
 
 /* Discover a configured IPv4 target and verify that it is a plain-TCP iX1300. */
 int ss_discover (const char *target, SsDevice *device, char *error, size_t error_size);
+/* Broadcast on every local network and store each plain-TCP iX1300 that
+   answers.  Returns the number of scanners stored, or -1 on error.  Replies
+   arrive on UDP port 55274, which a host firewall must allow. */
+int ss_discover_all (SsDevice *devices, size_t max, char *error, size_t error_size);
 
 int ss_session_open (SsSession *session, const SsDevice *device,
                      char *error, size_t error_size);

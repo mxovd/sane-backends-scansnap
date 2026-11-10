@@ -64,7 +64,7 @@ check_mode (const char *mode, int width)
   CHECK (params.format == (color ? SANE_FRAME_RGB : SANE_FRAME_GRAY));
   CHECK (params.depth == (lineart ? 1 : 8));
   CHECK (params.lines == -1);
-  CHECK (decode_jpeg (&jpeg, mode, &pixels, &size, &w, &h,
+  CHECK (decode_jpeg (&jpeg, mode, SANE_FALSE, &pixels, &size, &w, &h,
                      message, sizeof (message)) == SANE_STATUS_GOOD);
   ss_image_free (&jpeg);
   CHECK (w == width && h == 3 && size == (size_t) stride * 3);
@@ -106,14 +106,117 @@ check_mode (const char *mode, int width)
   handle.job_active = 0;
 }
 
+static int
+lineart_bit (const unsigned char *image, int stride, int x, int y)
+{
+  return !!(image[y * stride + x / 8] & (0x80 >> (x % 8)));
+}
+
+/* A rotated decode must equal the plain decode read back to front. */
+static void
+check_rotate (const char *mode, int width, int height)
+{
+  SsImage jpeg = make_jpeg (width, height);
+  unsigned char *plain, *rotated;
+  size_t plain_size, rotated_size;
+  char message[MAX_ERROR];
+  int w, h, x, y;
+  int color = !strcmp (mode, SANE_VALUE_SCAN_MODE_COLOR);
+  int lineart = !strcmp (mode, SANE_VALUE_SCAN_MODE_LINEART);
+  int bytes = color ? 3 : 1;
+  int stride = lineart ? (width + 7) / 8 : width * bytes;
+  CHECK (decode_jpeg (&jpeg, mode, SANE_FALSE, &plain, &plain_size, &w, &h,
+                     message, sizeof (message)) == SANE_STATUS_GOOD);
+  CHECK (decode_jpeg (&jpeg, mode, SANE_TRUE, &rotated, &rotated_size, &w, &h,
+                     message, sizeof (message)) == SANE_STATUS_GOOD);
+  ss_image_free (&jpeg);
+  CHECK (w == width && h == height && rotated_size == plain_size);
+  for (y = 0; y < height; y++)
+    for (x = 0; x < width; x++)
+      {
+        int rx = width - 1 - x, ry = height - 1 - y;
+        if (lineart)
+          CHECK (lineart_bit (rotated, stride, x, y)
+                 == lineart_bit (plain, stride, rx, ry));
+        else
+          CHECK (!memcmp (rotated + y * stride + x * bytes,
+                          plain + ry * stride + rx * bytes, bytes));
+      }
+  if (lineart && width % 8)
+    for (y = 0; y < height; y++)
+      CHECK (!(rotated[y * stride + stride - 1] & ((1 << (8 - width % 8)) - 1)));
+  free (plain);
+  free (rotated);
+}
+
+static void
+check_rotate_option (void)
+{
+  Device device = { 0 };
+  Handle handle = { 0 };
+  SANE_Word value;
+  SANE_Int changes;
+  init_options (&handle);
+  CHECK (handle.options[OPT_ROTATE].type == SANE_TYPE_BOOL);
+  CHECK (handle.options[OPT_ROTATE].cap & SANE_CAP_SOFT_SELECT);
+  CHECK (sane_control_option (&handle, OPT_ROTATE, SANE_ACTION_GET_VALUE,
+                             &value, NULL) == SANE_STATUS_GOOD && !value);
+  device.rotate = SANE_TRUE;
+  handle.device = &device;
+  init_options (&handle);
+  CHECK (sane_control_option (&handle, OPT_ROTATE, SANE_ACTION_GET_VALUE,
+                             &value, NULL) == SANE_STATUS_GOOD && value);
+  value = SANE_FALSE;
+  CHECK (sane_control_option (&handle, OPT_ROTATE, SANE_ACTION_SET_VALUE,
+                             &value, &changes) == SANE_STATUS_GOOD);
+  CHECK (!handle.rotate);
+}
+
+static void
+check_config_settings (void)
+{
+  char text[32];
+  CHECK (!config_rotate[SS_FEED_ADF] && !config_rotate[SS_FEED_RETURN]);
+  CHECK (config_return_path);
+  strcpy (text, "adf 180");
+  CHECK (parse_rotate (text) == 0 && config_rotate[SS_FEED_ADF]);
+  CHECK (!config_rotate[SS_FEED_RETURN]);
+  strcpy (text, "return 180");
+  CHECK (parse_rotate (text) == 0 && config_rotate[SS_FEED_RETURN]);
+  strcpy (text, "adf 0");
+  CHECK (parse_rotate (text) == 0 && !config_rotate[SS_FEED_ADF]);
+  strcpy (text, "adf 90");
+  CHECK (parse_rotate (text) < 0);
+  strcpy (text, "flatbed 180");
+  CHECK (parse_rotate (text) < 0);
+  strcpy (text, "adf 180 extra");
+  CHECK (parse_rotate (text) < 0);
+  CHECK (parse_return_path ("no") == 0 && !config_return_path);
+  CHECK (parse_return_path ("maybe") < 0 && !config_return_path);
+  CHECK (parse_return_path ("yes") == 0 && config_return_path);
+  CHECK (config_argument (strcpy (text, "rotate adf 180"), "rotate") == text + 7);
+  CHECK (config_argument (strcpy (text, "rotated adf"), "rotate") == NULL);
+  CHECK (config_argument (strcpy (text, "rotate   "), "rotate") == NULL);
+  sane_exit ();
+  CHECK (!config_rotate[SS_FEED_ADF] && !config_rotate[SS_FEED_RETURN]);
+  CHECK (config_return_path);
+}
+
 int
 main (void)
 {
-  int m, w;
+  int m, w, cases = 0;
   const int widths[] = { 1, 7, 8, 9, 17 };
   for (m = 0; mode_list[m]; m++)
     for (w = 0; w < 5; w++)
-      check_mode (mode_list[m], widths[w]);
-  puts ("ScanSnap: 15 offline image cases passed");
+      {
+        check_mode (mode_list[m], widths[w]);
+        check_rotate (mode_list[m], widths[w], 3);
+        check_rotate (mode_list[m], widths[w], 4);
+        cases += 3;
+      }
+  check_rotate_option ();
+  check_config_settings ();
+  printf ("ScanSnap: %d offline image cases and settings checks passed\n", cases);
   return 0;
 }
