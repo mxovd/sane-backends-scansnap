@@ -28,9 +28,17 @@ Add one line for each scanner, using a stable IPv4 address:
 .B net 192.168.0.145
 .RE
 .PP
-The scanner and host must be on the same local network.  The address should be
-reserved in DHCP because this backend does not yet perform untargeted network
-discovery.
+The scanner and host must be on the same local network.  A fixed address
+should be reserved in DHCP.  Alternatively, search the local networks each
+time the backend starts, so the scanner is found at whatever address it has:
+.PP
+.RS
+.B net auto
+.RE
+.PP
+The search broadcasts on every local network and lists each scanner that
+answers.  Replies arrive on UDP port 55274, which a host firewall must allow
+from the local network; a fixed address needs no firewall rule.
 .PP
 The following settings apply to every configured scanner, wherever they
 appear in the file:

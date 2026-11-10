@@ -11,6 +11,7 @@
 #include <netpacket/packet.h>
 #endif
 #include <netinet/in.h>
+#include <poll.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,6 +26,9 @@
 #define SS_DISCOVERY_PORT 52217
 #define SS_REPLY_PORT 55274
 #define SS_TRIGGER_PORT 55275
+#define SS_MAX_PROBES 8
+#define SS_DISCOVERY_WAIT_MS 2000
+#define SS_DISCOVERY_SETTLE_MS 300
 #define SS_READ_BLOCK 256000U
 #define SS_MAX_BLOCKS 512
 
@@ -108,6 +112,34 @@ read_all (int fd, void *buffer, size_t length)
   return 0;
 }
 
+#ifdef __linux__
+/* Copy the MAC address of the named interface from a getifaddrs() list. */
+static int
+interface_mac (const struct ifaddrs *addresses, const char *name, uint8_t mac[6])
+{
+  const struct ifaddrs *entry;
+  for (entry = addresses; entry; entry = entry->ifa_next)
+    if (entry->ifa_addr && entry->ifa_addr->sa_family == AF_PACKET
+        && !strcmp (entry->ifa_name, name))
+      {
+        const struct sockaddr_ll *link = (const struct sockaddr_ll *) entry->ifa_addr;
+        if (link->sll_halen == 6)
+          {
+            memcpy (mac, link->sll_addr, 6);
+            return 0;
+          }
+      }
+  return -1;
+}
+#else
+static int
+interface_mac (const struct ifaddrs *addresses, const char *name, uint8_t mac[6])
+{
+  (void) addresses; (void) name; (void) mac;
+  return -1;
+}
+#endif
+
 static int
 route_identity (const struct sockaddr_in *target, uint8_t local_ip[4],
                 uint8_t identity[6], char *error, size_t error_size)
@@ -115,7 +147,7 @@ route_identity (const struct sockaddr_in *target, uint8_t local_ip[4],
   struct sockaddr_in local;
   socklen_t local_len = sizeof (local);
   struct ifaddrs *addresses = NULL, *entry;
-  char interface[IF_NAMESIZE] = "";
+  int found = -1;
   int fd = socket (AF_INET, SOCK_DGRAM, 0);
   if (fd < 0 || connect (fd, (const struct sockaddr *) target, sizeof (*target)) < 0
       || getsockname (fd, (struct sockaddr *) &local, &local_len) < 0)
@@ -139,26 +171,13 @@ route_identity (const struct sockaddr_in *target, uint8_t local_ip[4],
         && !memcmp (&((struct sockaddr_in *) entry->ifa_addr)->sin_addr,
                     &local.sin_addr, 4))
       {
-        snprintf (interface, sizeof (interface), "%s", entry->ifa_name);
+        found = interface_mac (addresses, entry->ifa_name, identity);
         break;
       }
-#ifdef __linux__
-  for (entry = addresses; interface[0] && entry; entry = entry->ifa_next)
-    if (entry->ifa_addr && entry->ifa_addr->sa_family == AF_PACKET
-        && !strcmp (entry->ifa_name, interface))
-      {
-        const struct sockaddr_ll *link = (const struct sockaddr_ll *) entry->ifa_addr;
-        if (link->sll_halen == 6)
-          {
-            memcpy (identity, link->sll_addr, 6);
-            freeifaddrs (addresses);
-            return 0;
-          }
-      }
-#endif
   freeifaddrs (addresses);
-  set_error (error, error_size, "cannot determine the route interface MAC address");
-  return -1;
+  if (found < 0)
+    set_error (error, error_size, "cannot determine the route interface MAC address");
+  return found;
 }
 
 static void
@@ -171,16 +190,187 @@ socket_timeout (int fd, int seconds)
   setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof (timeout));
 }
 
+/* One local interface searching for scanners: the socket its replies arrive
+   on, and the address and identity it announces. */
+typedef struct
+{
+  int fd;
+  uint8_t local_ip[4];
+  uint8_t identity[6];
+} SsProbe;
+
+static int64_t
+monotonic_ms (void)
+{
+  struct timespec now;
+  clock_gettime (CLOCK_MONOTONIC, &now);
+  return (int64_t) now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+/* Open the probe's reply socket and send discovery requests to destination. */
+static int
+probe_open (SsProbe *probe, const struct in_addr *destination, int broadcast)
+{
+  struct sockaddr_in local, target;
+  uint8_t request[32] = {0};
+  int attempt, one = 1;
+
+  memcpy (request, "VENS", 4);
+  memcpy (request + 8, probe->local_ip, 4);
+  memcpy (request + 12, probe->identity, 6);
+  put_be32 (request + 20, SS_REPLY_PORT);
+  put_be16 (request + 24, 16);
+
+  probe->fd = socket (AF_INET, SOCK_DGRAM, 0);
+  if (probe->fd < 0)
+    return -1;
+  setsockopt (probe->fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof (one));
+  if (broadcast)
+    setsockopt (probe->fd, SOL_SOCKET, SO_BROADCAST, &one, sizeof (one));
+  memset (&local, 0, sizeof (local));
+  local.sin_family = AF_INET;
+  local.sin_port = htons (SS_REPLY_PORT);
+  memcpy (&local.sin_addr, probe->local_ip, 4);
+  if (bind (probe->fd, (struct sockaddr *) &local, sizeof (local)) < 0)
+    {
+      close (probe->fd);
+      probe->fd = -1;
+      return -1;
+    }
+  memset (&target, 0, sizeof (target));
+  target.sin_family = AF_INET;
+  target.sin_port = htons (SS_DISCOVERY_PORT);
+  target.sin_addr = *destination;
+  for (attempt = 0; attempt < 3; attempt++)
+    sendto (probe->fd, request, sizeof (request), 0,
+            (struct sockaddr *) &target, sizeof (target));
+  return 0;
+}
+
+/* Decode a discovery reply received from peer.  Returns 0 for a supported
+   scanner, 1 when it is not a discovery reply, 2 for an unsupported reply,
+   and 3 for a device other than a plain-TCP iX1300. */
+static int
+parse_discovery_reply (const uint8_t *reply, size_t length,
+                       const struct in_addr *peer, SsDevice *device)
+{
+  uint32_t scanner_port, application_port;
+  size_t end;
+
+  memset (device, 0, sizeof (*device));
+  if (length < 144)
+    return 1;
+  if (memcmp (reply, "VENS", 4) || get_be16 (reply + 4) > 1
+      || get_be16 (reply + 6) != 0 || get_be16 (reply + 8) != 16
+      || get_be16 (reply + 10) != 48 || get_be32 (reply + 12) != 0
+      || memcmp (reply + 16, peer, 4))
+    return 2;
+  scanner_port = get_be32 (reply + 20);
+  application_port = get_be32 (reply + 24);
+  if (scanner_port > 65535 || application_port > 65535)
+    return 2;
+  memcpy (device->magic, reply, 4);
+  device->scanner_port = (uint16_t) scanner_port;
+  device->application_port = (uint16_t) application_port;
+  memcpy (device->product, reply + 104, 16);
+  memcpy (device->serial, reply + 132, 10);
+  for (end = strlen (device->product); end && device->product[end - 1] == ' ';)
+    device->product[--end] = '\0';
+  for (end = strlen (device->serial); end && device->serial[end - 1] == ' ';)
+    device->serial[--end] = '\0';
+  if (!inet_ntop (AF_INET, peer, device->ip, sizeof (device->ip)))
+    return 2;
+  if (strcmp (device->product, "ScanSnap iX1300") != 0
+      || (reply[36] & 8) || device->scanner_port == 0
+      || device->application_port == 0)
+    return 3;
+  return 0;
+}
+
+/* Collect discovery replies on every probe until the deadline.  With only
+   set, replies from other hosts are ignored and its first reply ends the
+   search, storing why it was rejected if it was.  Otherwise each distinct
+   scanner is stored, and the search ends shortly after the first one so a
+   lone scanner does not cost the whole wait.  Returns the number stored. */
+static size_t
+probes_collect (const SsProbe *probes, size_t probe_count,
+                const struct in_addr *only, SsDevice *found, size_t max,
+                int *rejected)
+{
+  struct pollfd fds[SS_MAX_PROBES];
+  int64_t deadline = monotonic_ms () + SS_DISCOVERY_WAIT_MS;
+  size_t count = 0, index, known;
+
+  *rejected = 0;
+  for (index = 0; index < probe_count; index++)
+    {
+      fds[index].fd = probes[index].fd;
+      fds[index].events = POLLIN;
+    }
+  while (count < max)
+    {
+      int64_t remaining = deadline - monotonic_ms ();
+      int ready;
+      if (remaining <= 0)
+        break;
+      ready = poll (fds, (nfds_t) probe_count, (int) remaining);
+      if (ready < 0 && errno == EINTR)
+        continue;
+      if (ready <= 0)
+        break;
+      for (index = 0; index < probe_count && count < max; index++)
+        {
+          struct sockaddr_in peer;
+          socklen_t peer_len = sizeof (peer);
+          uint8_t reply[512];
+          SsDevice device;
+          ssize_t received;
+          int status;
+          if (!(fds[index].revents & POLLIN))
+            {
+              if (fds[index].revents)
+                fds[index].fd = -1; /* Failed socket: stop polling it. */
+              continue;
+            }
+          received = recvfrom (fds[index].fd, reply, sizeof (reply), MSG_DONTWAIT,
+                               (struct sockaddr *) &peer, &peer_len);
+          if (received < 0 || peer_len < sizeof (peer) || peer.sin_family != AF_INET
+              || (only && peer.sin_addr.s_addr != only->s_addr))
+            continue;
+          status = parse_discovery_reply (reply, (size_t) received,
+                                          &peer.sin_addr, &device);
+          if (status)
+            {
+              if (!only)
+                continue;
+              *rejected = status;
+              return 0;
+            }
+          for (known = 0; known < count; known++)
+            if (!strcmp (found[known].ip, device.ip))
+              break;
+          if (known < count)
+            continue;
+          memcpy (device.local_ip, probes[index].local_ip, 4);
+          memcpy (device.identity, probes[index].identity, 6);
+          found[count++] = device;
+          if (only)
+            return count;
+          if (deadline - monotonic_ms () > SS_DISCOVERY_SETTLE_MS)
+            deadline = monotonic_ms () + SS_DISCOVERY_SETTLE_MS;
+        }
+    }
+  return count;
+}
+
 int
 ss_discover (const char *target_text, SsDevice *device, char *error,
              size_t error_size)
 {
-  struct sockaddr_in target, local, peer;
-  uint8_t request[32] = {0}, reply[512];
-  socklen_t peer_len = sizeof (peer);
-  ssize_t count;
-  uint32_t scanner_port, application_port;
-  int fd, attempt, one = 1;
+  struct sockaddr_in target;
+  SsProbe probe;
+  size_t count;
+  int rejected;
 
   memset (device, 0, sizeof (*device));
   memset (&target, 0, sizeof (target));
@@ -191,87 +381,61 @@ ss_discover (const char *target_text, SsDevice *device, char *error,
       set_error (error, error_size, "invalid scanner IPv4 address: %s", target_text);
       return -1;
     }
-  if (route_identity (&target, device->local_ip, device->identity,
+  if (route_identity (&target, probe.local_ip, probe.identity,
                       error, error_size) < 0)
     return -1;
-
-  memcpy (request, "VENS", 4);
-  memcpy (request + 8, device->local_ip, 4);
-  memcpy (request + 12, device->identity, 6);
-  put_be32 (request + 20, SS_REPLY_PORT);
-  put_be16 (request + 24, 16);
-
-  fd = socket (AF_INET, SOCK_DGRAM, 0);
-  if (fd < 0)
-    goto socket_error;
-  setsockopt (fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof (one));
-  socket_timeout (fd, 2);
-  memset (&local, 0, sizeof (local));
-  local.sin_family = AF_INET;
-  local.sin_port = htons (SS_REPLY_PORT);
-  memcpy (&local.sin_addr, device->local_ip, 4);
-  if (bind (fd, (struct sockaddr *) &local, sizeof (local)) < 0)
-    goto socket_error_close;
-  for (attempt = 0; attempt < 3; attempt++)
-    sendto (fd, request, sizeof (request), 0,
-            (struct sockaddr *) &target, sizeof (target));
-  do
+  if (probe_open (&probe, &target.sin_addr, 0) < 0)
     {
-      count = recvfrom (fd, reply, sizeof (reply), 0,
-                        (struct sockaddr *) &peer, &peer_len);
-    }
-  while (count >= 0 && peer.sin_addr.s_addr != target.sin_addr.s_addr);
-  close (fd);
-  if (count < 144)
-    {
-      set_error (error, error_size, "no valid discovery reply from %s", target_text);
+      set_error (error, error_size, "discovery socket failed: %s", strerror (errno));
       return -1;
     }
-  if (memcmp (reply, "VENS", 4) || get_be16 (reply + 4) > 1
-      || get_be16 (reply + 6) != 0 || get_be16 (reply + 8) != 16
-      || get_be16 (reply + 10) != 48 || get_be32 (reply + 12) != 0
-      || memcmp (reply + 16, &target.sin_addr, 4))
-    {
-      set_error (error, error_size, "unsupported discovery reply from %s", target_text);
-      return -1;
-    }
-  memcpy (device->magic, reply, 4);
-  scanner_port = get_be32 (reply + 20);
-  application_port = get_be32 (reply + 24);
-  if (scanner_port > 65535 || application_port > 65535)
-    {
-      set_error (error, error_size, "scanner advertised an invalid TCP port");
-      return -1;
-    }
-  device->scanner_port = (uint16_t) scanner_port;
-  device->application_port = (uint16_t) application_port;
-  memcpy (device->product, reply + 104, 16);
-  device->product[16] = '\0';
-  memcpy (device->serial, reply + 132, 10);
-  device->serial[10] = '\0';
-  {
-    size_t length = strlen (device->product);
-    while (length && device->product[length - 1] == ' ')
-      device->product[--length] = '\0';
-    length = strlen (device->serial);
-    while (length && device->serial[length - 1] == ' ')
-      device->serial[--length] = '\0';
-  }
-  snprintf (device->ip, sizeof (device->ip), "%s", target_text);
-  if (strcmp (device->product, "ScanSnap iX1300") != 0
-      || (reply[36] & 8) || device->scanner_port == 0
-      || device->application_port == 0)
-    {
-      set_error (error, error_size, "target is not a supported plain-TCP iX1300");
-      return -1;
-    }
-  return 0;
-
-socket_error_close:
-  close (fd);
-socket_error:
-  set_error (error, error_size, "discovery socket failed: %s", strerror (errno));
+  count = probes_collect (&probe, 1, &target.sin_addr, device, 1, &rejected);
+  close (probe.fd);
+  if (count)
+    return 0;
+  if (rejected == 3)
+    set_error (error, error_size, "target is not a supported plain-TCP iX1300");
+  else if (rejected == 2)
+    set_error (error, error_size, "unsupported discovery reply from %s", target_text);
+  else
+    set_error (error, error_size, "no valid discovery reply from %s", target_text);
   return -1;
+}
+
+int
+ss_discover_all (SsDevice *devices, size_t max, char *error, size_t error_size)
+{
+  struct ifaddrs *addresses = NULL, *entry;
+  SsProbe probes[SS_MAX_PROBES];
+  size_t probe_count = 0, count = 0, index;
+  int rejected;
+
+  if (getifaddrs (&addresses) < 0)
+    {
+      set_error (error, error_size, "cannot list network interfaces: %s",
+                 strerror (errno));
+      return -1;
+    }
+  for (entry = addresses; entry && probe_count < SS_MAX_PROBES; entry = entry->ifa_next)
+    {
+      SsProbe *probe = &probes[probe_count];
+      if (!entry->ifa_addr || entry->ifa_addr->sa_family != AF_INET
+          || !(entry->ifa_flags & IFF_UP) || !(entry->ifa_flags & IFF_BROADCAST)
+          || (entry->ifa_flags & IFF_LOOPBACK) || !entry->ifa_broadaddr
+          || entry->ifa_broadaddr->sa_family != AF_INET)
+        continue;
+      memcpy (probe->local_ip, &((struct sockaddr_in *) entry->ifa_addr)->sin_addr, 4);
+      if (interface_mac (addresses, entry->ifa_name, probe->identity) == 0
+          && probe_open (probe, &((struct sockaddr_in *) entry->ifa_broadaddr)->sin_addr,
+                         1) == 0)
+        probe_count++;
+    }
+  freeifaddrs (addresses);
+  if (probe_count)
+    count = probes_collect (probes, probe_count, NULL, devices, max, &rejected);
+  for (index = 0; index < probe_count; index++)
+    close (probes[index].fd);
+  return (int) count;
 }
 
 static int

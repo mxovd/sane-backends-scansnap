@@ -226,29 +226,26 @@ free_device (Device *device)
   free (device);
 }
 
+/* Add the logical devices of one discovered scanner, named after address. */
 static SANE_Status
-attach_target (const char *target)
+attach_device (const SsDevice *protocol, const char *address)
 {
-  SsDevice protocol;
+  Device *device;
   int path;
-  char error[MAX_ERROR];
-  if (ss_discover (target, &protocol, error, sizeof (error)) < 0)
-    {
-      DBG (1, "attach_target: %s\n", error);
-      return SANE_STATUS_IO_ERROR;
-    }
+  for (device = devices; device; device = device->next)
+    if (!strcmp (device->protocol.ip, protocol->ip))
+      return SANE_STATUS_GOOD; /* Already listed by an earlier setting. */
   /* Prepend in reverse order so ADF is the default and is listed first. */
   for (path = SS_FEED_RETURN; path >= SS_FEED_ADF; path--)
     {
       SsFeed feed = (SsFeed) path;
-      Device *device;
       char name[128], model[128];
       if (feed == SS_FEED_RETURN && !config_return_path)
         continue;
       device = calloc (1, sizeof (*device));
       if (!device) return SANE_STATUS_NO_MEM;
       /* The dll backend prepends "scansnap:" to this backend-local name. */
-      snprintf (name, sizeof (name), "net:%s:%s", target,
+      snprintf (name, sizeof (name), "net:%s:%s", address,
                 feed == SS_FEED_ADF ? "adf" : "return");
       snprintf (model, sizeof (model), "ScanSnap iX1300 %s",
                 feed == SS_FEED_ADF ? "ADF" : "Return Path");
@@ -261,13 +258,43 @@ attach_target (const char *target)
           free_device (device);
           return SANE_STATUS_NO_MEM;
         }
-      device->protocol = protocol;
+      device->protocol = *protocol;
       device->feed = feed;
       device->rotate = config_rotate[feed];
       device->next = devices;
       devices = device;
       device_count++;
     }
+  return SANE_STATUS_GOOD;
+}
+
+/* Attach the scanner at an IPv4 address, or with "auto" every scanner that
+   answers a broadcast search of the local networks. */
+static SANE_Status
+attach_target (const char *target)
+{
+  SsDevice found[MAX_TARGETS];
+  char error[MAX_ERROR];
+  int count, index;
+  if (strcmp (target, "auto"))
+    {
+      if (ss_discover (target, &found[0], error, sizeof (error)) < 0)
+        {
+          DBG (1, "attach_target: %s\n", error);
+          return SANE_STATUS_IO_ERROR;
+        }
+      return attach_device (&found[0], target);
+    }
+  count = ss_discover_all (found, MAX_TARGETS, error, sizeof (error));
+  if (count < 0)
+    {
+      DBG (1, "attach_target: %s\n", error);
+      return SANE_STATUS_IO_ERROR;
+    }
+  DBG (1, "attach_target: %d scanner(s) answered the broadcast search\n", count);
+  for (index = 0; index < count; index++)
+    if (attach_device (&found[index], found[index].ip) != SANE_STATUS_GOOD)
+      return SANE_STATUS_NO_MEM;
   return SANE_STATUS_GOOD;
 }
 

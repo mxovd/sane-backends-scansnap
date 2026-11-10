@@ -116,6 +116,22 @@ scanimage -d 'scansnap:net:192.168.0.145:adf' \
 The native NAPS2 package can load system SANE backends. Its Flatpak package
 cannot normally load a backend installed on the host.
 
+## Finding the scanner without a fixed address
+
+Instead of an address, `scansnap.conf` can ask for a search of the local
+networks, so the scanner keeps working when DHCP gives it another address:
+
+```text
+net auto
+```
+
+The backend broadcasts on every local network and lists each iX1300 that
+answers, ending shortly after the first reply. Replies arrive on UDP port
+55274, which a host firewall must allow from the local network, for example
+`ufw allow from 192.168.0.0/24 to any port 55274 proto udp`. A fixed address
+needs no firewall rule. Device names contain the address found, so they change
+when the scanner's address does.
+
 ## Page orientation and the Return Path device
 
 The scanner delivers pages upright when they are loaded top edge first, as its

@@ -4,6 +4,12 @@
 #
 # net 192.168.0.145
 #
+# Or search the local networks instead, so the scanner is found whatever
+# address DHCP gives it. The scanner answers on UDP port 55274, which a host
+# firewall must allow from the local network.
+#
+# net auto
+#
 # Rotate pages by 180 degrees for sheets loaded bottom edge first, for example
 # with the text upright and facing you in the ADF paper chute. Use 0 (the
 # default) for sheets loaded top edge first, as the scanner manual describes.

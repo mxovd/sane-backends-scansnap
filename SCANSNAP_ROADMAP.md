@@ -64,7 +64,6 @@ and object files are not required at runtime.
 ## Known limitations
 
 - Wi-Fi only; USB is not implemented.
-- The scanner address must be configured explicitly.
 - Only 300 dpi acquisition is implemented.
 - Gray and Lineart output use host conversion of color JPEGs; native scanner
   grayscale and monochrome acquisition remain unvalidated.
@@ -146,10 +145,9 @@ Before adding many scan options:
 3. Verify repeated and multi-sheet scans.
 4. Improve scanner-busy, no-paper, cover-open, and device-error reporting.
 5. Test concurrent processes and multiple configured scanners.
-6. Add broadcast discovery so DHCP reservations are optional.
-7. Reduce peak memory use by decoding or delivering pages incrementally.
-8. Validate maximum page and long-document sizes.
-9. Investigate encrypted and password-protected sessions.
+6. Reduce peak memory use by decoding or delivering pages incrementally.
+7. Validate maximum page and long-document sizes.
+8. Investigate encrypted and password-protected sessions.
 
 ## Scan feature milestone
 
