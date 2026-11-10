@@ -3,3 +3,14 @@
 # ADF and Return Path devices so frontends with generic source names can use it.
 #
 # net 192.168.0.145
+#
+# Rotate pages by 180 degrees for sheets loaded bottom edge first, for example
+# with the text upright and facing you in the ADF paper chute. Use 0 (the
+# default) for sheets loaded top edge first, as the scanner manual describes.
+#
+# rotate adf 180
+# rotate return 0
+#
+# Set to "no" to list only the ADF device and hide the Return Path device.
+#
+# return-path yes

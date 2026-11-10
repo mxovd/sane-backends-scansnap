@@ -116,6 +116,29 @@ scanimage -d 'scansnap:net:192.168.0.145:adf' \
 The native NAPS2 package can load system SANE backends. Its Flatpak package
 cannot normally load a backend installed on the host.
 
+## Page orientation and the Return Path device
+
+The scanner delivers pages upright when they are loaded top edge first, as its
+manual describes. If you load sheets the other way round, with the text
+upright and facing you in the ADF paper chute, add this to `scansnap.conf`
+so every ADF page is rotated by 180 degrees:
+
+```text
+rotate adf 180
+```
+
+`rotate return 180` does the same for the Return Path. The `--rotate` option
+overrides the configured default for one scan, for example
+`scanimage --rotate=no`.
+
+To list only the ADF device, hide the Return Path device with:
+
+```text
+return-path no
+```
+
+These settings apply to every scanner in the file, wherever they appear.
+
 ## NAPS2
 
 Before installing the backend system-wide, launch the native NAPS2 build from

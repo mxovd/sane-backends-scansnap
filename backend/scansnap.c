@@ -38,6 +38,7 @@ enum
   OPT_RESOLUTION,
   OPT_ENHANCEMENT_GROUP,
   OPT_AUTO_SIZE,
+  OPT_ROTATE,
   OPT_DEVICE_GROUP,
   OPT_FEED_PATH,
   OPT_SERIAL,
@@ -51,6 +52,7 @@ struct Device
   SANE_Device sane;
   SsDevice protocol;
   SsFeed feed;
+  SANE_Bool rotate;
   int open;
 };
 
@@ -62,6 +64,7 @@ typedef struct
   char mode[16];
   SANE_Word resolution;
   SANE_Bool auto_size;
+  SANE_Bool rotate;
   uint8_t *front;
   size_t front_size;
   uint8_t *back;
@@ -92,6 +95,12 @@ static const SANE_Device **device_list;
 static size_t device_count;
 static SANE_Bool initialized;
 
+/* scansnap.conf settings, indexed by SsFeed.  They apply to every scanner in
+   the file, wherever the setting appears relative to its "net" lines. */
+#define MAX_TARGETS 16
+static SANE_Bool config_rotate[2];
+static SANE_Bool config_return_path = SANE_TRUE;
+
 static const SANE_String_Const source_list[] = {
   "ADF Front", "ADF Duplex", NULL
 };
@@ -118,9 +127,28 @@ jpeg_error_exit (j_common_ptr info)
   longjmp (error->jump, 1);
 }
 
+/* Rotate a packed 8-bit image by 180 degrees in place.  Rows have no padding,
+   so reversing the order of all pixels reverses both rows and columns. */
+static void
+rotate_180 (uint8_t *pixels, size_t count, size_t pixel_bytes)
+{
+  size_t first = 0, last = count;
+  uint8_t swap[3];
+  while (last > first + 1)
+    {
+      uint8_t *a = pixels + first * pixel_bytes;
+      uint8_t *b = pixels + --last * pixel_bytes;
+      memcpy (swap, a, pixel_bytes);
+      memcpy (a, b, pixel_bytes);
+      memcpy (b, swap, pixel_bytes);
+      first++;
+    }
+}
+
 static SANE_Status
-decode_jpeg (const SsImage *jpeg, const char *mode, uint8_t **pixels, size_t *size,
-             int *width, int *height, char *message, size_t message_size)
+decode_jpeg (const SsImage *jpeg, const char *mode, SANE_Bool rotate,
+             uint8_t **pixels, size_t *size, int *width, int *height,
+             char *message, size_t message_size)
 {
   struct jpeg_decompress_struct info;
   JpegError error;
@@ -165,6 +193,8 @@ decode_jpeg (const SsImage *jpeg, const char *mode, uint8_t **pixels, size_t *si
   *height = (int) info.output_height;
   jpeg_finish_decompress (&info);
   jpeg_destroy_decompress (&info);
+  if (rotate)
+    rotate_180 (output, (size_t) *width * (size_t) *height, color ? 3 : 1);
   if (lineart)
     {
       size_t y, x, packed_row = ((size_t) *width + 7) / 8;
@@ -211,8 +241,11 @@ attach_target (const char *target)
   for (path = SS_FEED_RETURN; path >= SS_FEED_ADF; path--)
     {
       SsFeed feed = (SsFeed) path;
-      Device *device = calloc (1, sizeof (*device));
+      Device *device;
       char name[128], model[128];
+      if (feed == SS_FEED_RETURN && !config_return_path)
+        continue;
+      device = calloc (1, sizeof (*device));
       if (!device) return SANE_STATUS_NO_MEM;
       /* The dll backend prepends "scansnap:" to this backend-local name. */
       snprintf (name, sizeof (name), "net:%s:%s", target,
@@ -230,6 +263,7 @@ attach_target (const char *target)
         }
       device->protocol = protocol;
       device->feed = feed;
+      device->rotate = config_rotate[feed];
       device->next = devices;
       devices = device;
       device_count++;
@@ -237,11 +271,60 @@ attach_target (const char *target)
   return SANE_STATUS_GOOD;
 }
 
+/* Split "keyword value..." into its keyword and the rest; returns the rest,
+   or NULL when line does not start with keyword followed by whitespace. */
+static char *
+config_argument (char *line, const char *keyword)
+{
+  size_t length = strlen (keyword);
+  if (strncmp (line, keyword, length) || !isspace ((unsigned char) line[length]))
+    return NULL;
+  line += length;
+  while (isspace ((unsigned char) *line)) line++;
+  return *line ? line : NULL;
+}
+
+/* "rotate adf 180", "rotate return 0", and so on. */
+static int
+parse_rotate (char *text)
+{
+  char path[16], angle[16], extra;
+  int feed;
+  if (sscanf (text, "%15s %15s %c", path, angle, &extra) != 2)
+    return -1;
+  if (!strcmp (path, "adf"))
+    feed = SS_FEED_ADF;
+  else if (!strcmp (path, "return"))
+    feed = SS_FEED_RETURN;
+  else
+    return -1;
+  if (!strcmp (angle, "180"))
+    config_rotate[feed] = SANE_TRUE;
+  else if (!strcmp (angle, "0"))
+    config_rotate[feed] = SANE_FALSE;
+  else
+    return -1;
+  return 0;
+}
+
+static int
+parse_return_path (const char *text)
+{
+  if (!strcmp (text, "yes"))
+    config_return_path = SANE_TRUE;
+  else if (!strcmp (text, "no"))
+    config_return_path = SANE_FALSE;
+  else
+    return -1;
+  return 0;
+}
+
 static void
 read_config (void)
 {
   FILE *file = sanei_config_open (SCANSNAP_CONFIG_FILE);
-  char line[PATH_MAX];
+  char line[PATH_MAX], targets[MAX_TARGETS][64];
+  size_t target_count = 0, index;
   if (!file)
     {
       DBG (1, "read_config: %s was not found; no devices configured\n",
@@ -250,21 +333,35 @@ read_config (void)
     }
   while (sanei_config_read (line, sizeof (line), file))
     {
-      char *text = line, *end;
+      char *text = line, *end, *argument;
       while (isspace ((unsigned char) *text)) text++;
       if (!*text || *text == '#') continue;
       end = text + strlen (text);
       while (end > text && isspace ((unsigned char) end[-1])) *--end = '\0';
-      if (!strncmp (text, "net", 3) && isspace ((unsigned char) text[3]))
+      if ((argument = config_argument (text, "net")))
         {
-          text += 4;
-          while (isspace ((unsigned char) *text)) text++;
-          if (*text) attach_target (text);
+          if (target_count == MAX_TARGETS || strlen (argument) >= sizeof (targets[0]))
+            DBG (1, "read_config: ignored scanner: %s\n", argument);
+          else
+            snprintf (targets[target_count++], sizeof (targets[0]), "%s", argument);
+        }
+      else if ((argument = config_argument (text, "rotate")))
+        {
+          if (parse_rotate (argument) < 0)
+            DBG (1, "read_config: expected \"rotate adf|return 0|180\": %s\n", text);
+        }
+      else if ((argument = config_argument (text, "return-path")))
+        {
+          if (parse_return_path (argument) < 0)
+            DBG (1, "read_config: expected \"return-path yes|no\": %s\n", text);
         }
       else
         DBG (1, "read_config: ignored line: %s\n", text);
     }
   fclose (file);
+  /* Attach after reading every setting so their order in the file is free. */
+  for (index = 0; index < target_count; index++)
+    attach_target (targets[index]);
 }
 
 SANE_Status
@@ -296,6 +393,8 @@ sane_exit (void)
   free (device_list);
   device_list = NULL;
   device_count = 0;
+  config_rotate[SS_FEED_ADF] = config_rotate[SS_FEED_RETURN] = SANE_FALSE;
+  config_return_path = SANE_TRUE;
   initialized = SANE_FALSE;
 }
 
@@ -357,6 +456,11 @@ init_options (Handle *handle)
   option (&o[OPT_AUTO_SIZE], "automatic-page-size", "Automatic page size",
           "Use the scanner's automatic document length and cropping.",
           SANE_TYPE_BOOL, SANE_UNIT_NONE, sizeof (SANE_Word), SANE_CAP_SOFT_DETECT);
+  option (&o[OPT_ROTATE], "rotate", "Rotate 180 degrees",
+          "Rotate every page by 180 degrees, for sheets loaded with their "
+          "bottom edge first. The default comes from scansnap.conf.",
+          SANE_TYPE_BOOL, SANE_UNIT_NONE, sizeof (SANE_Word),
+          SANE_CAP_SOFT_SELECT | SANE_CAP_SOFT_DETECT);
   option (&o[OPT_DEVICE_GROUP], SANE_NAME_ADVANCED, "Device", "",
           SANE_TYPE_GROUP, SANE_UNIT_NONE, 0, 0);
   option (&o[OPT_FEED_PATH], "feed-path", "Feed path", "Physical paper path.",
@@ -367,6 +471,7 @@ init_options (Handle *handle)
   snprintf (handle->mode, sizeof (handle->mode), "%s", mode_list[0]);
   handle->resolution = 300;
   handle->auto_size = SANE_TRUE;
+  handle->rotate = handle->device ? handle->device->rotate : SANE_FALSE;
 }
 
 SANE_Status
@@ -446,6 +551,7 @@ sane_control_option (SANE_Handle opaque, SANE_Int index, SANE_Action action,
         case OPT_MODE: strcpy (value, handle->mode); break;
         case OPT_RESOLUTION: *(SANE_Word *) value = handle->resolution; break;
         case OPT_AUTO_SIZE: *(SANE_Word *) value = handle->auto_size; break;
+        case OPT_ROTATE: *(SANE_Word *) value = handle->rotate; break;
         case OPT_FEED_PATH:
           strcpy (value, handle->device->feed == SS_FEED_ADF ? "ADF" : "Return");
           break;
@@ -471,6 +577,7 @@ sane_control_option (SANE_Handle opaque, SANE_Int index, SANE_Action action,
       changes |= SANE_INFO_RELOAD_PARAMS;
       break;
     case OPT_RESOLUTION: handle->resolution = *(SANE_Word *) value; break;
+    case OPT_ROTATE: handle->rotate = *(SANE_Word *) value ? SANE_TRUE : SANE_FALSE; break;
     default: return SANE_STATUS_INVAL;
     }
   if (info) *info = changes;
@@ -603,12 +710,14 @@ sane_start (SANE_Handle opaque)
           return SANE_STATUS_IO_ERROR;
         }
     }
-  status = decode_jpeg (&front_jpeg, handle->mode, &handle->front, &handle->front_size,
+  status = decode_jpeg (&front_jpeg, handle->mode, handle->rotate,
+                        &handle->front, &handle->front_size,
                         &front_width, &front_height, error, sizeof (error));
   ss_image_free (&front_jpeg);
   if (status == SANE_STATUS_GOOD && handle->duplex)
     {
-      status = decode_jpeg (&back_jpeg, handle->mode, &handle->back, &handle->back_size,
+      status = decode_jpeg (&back_jpeg, handle->mode, handle->rotate,
+                            &handle->back, &handle->back_size,
                             &back_width, &back_height, error, sizeof (error));
       if (status == SANE_STATUS_GOOD)
         {
